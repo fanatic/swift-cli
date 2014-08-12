@@ -1,18 +1,18 @@
 package main
 
 import (
-  "io"
-  "bytes"
-  "github.com/ncw/swift"
-  "sync"
-  "hash"
-  "strings"
-  "crypto/md5"
-  "syscall"
-  "math"
-  "time"
-  "fmt"
-  "encoding/base64"
+	"bytes"
+	"crypto/md5"
+	"encoding/base64"
+	"fmt"
+	"github.com/ncw/swift"
+	"hash"
+	"io"
+	"math"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
 )
 
 // defined by openstack
@@ -36,10 +36,11 @@ type part struct {
 }
 
 type largeObject struct {
-	c           *swift.Connection
-	container   string
-	objectName  string
-	timestamp   string
+	c          *swift.Connection
+	container  string
+	objectName string
+	timestamp  string
+	expire     string
 
 	bufsz      int64
 	buf        *bytes.Buffer
@@ -54,49 +55,50 @@ type largeObject struct {
 	bp *bp
 }
 
-
 // NewUploader provides a writer to upload data as a segmented upload
 //
-// It will upload all the segments into a second container named <container>_segments. 
-// These segments will have names like large_file/1290206778.25/00000000, 
+// It will upload all the segments into a second container named <container>_segments.
+// These segments will have names like large_file/1290206778.25/00000000,
 // large_file/1290206778.25/00000001, etc.
 //
-// The main benefit for using a separate container is that the main container listings 
-// will not be polluted with all the segment names. The reason for using the segment 
-// name format of <name>/<timestamp>/<segment> is so that an upload of a new 
-// file with the same name won’t overwrite the contents of the first until the last 
+// The main benefit for using a separate container is that the main container listings
+// will not be polluted with all the segment names. The reason for using the segment
+// name format of <name>/<timestamp>/<segment> is so that an upload of a new
+// file with the same name won’t overwrite the contents of the first until the last
 // moment when the manifest file is updated.
 //
-// swift will manage these segment files for you, deleting old segments on deletes 
-// and overwrites, etc. You can override this behavior with the --leave-segments 
-// option if desired; this is useful if you want to have multiple versions of 
+// swift will manage these segment files for you, deleting old segments on deletes
+// and overwrites, etc. You can override this behavior with the --leave-segments
+// option if desired; this is useful if you want to have multiple versions of
 // the same large object available.
-func NewUploader(c *swift.Connection, path string, concurrency int, partSize int64) (*largeObject, error) {
+func NewUploader(c *swift.Connection, path string, concurrency int, partSize int64, expireAfter int64) (*largeObject, error) {
 	pathParts := strings.SplitN(path, "/", 2)
 	objectName := "upload"
 	if len(pathParts) > 1 {
 		objectName = pathParts[1]
 	}
 	lo := largeObject{
-		c: c,
-		container: pathParts[0],
+		c:          c,
+		container:  pathParts[0],
 		objectName: objectName,
-		timestamp: fmt.Sprintf("%d", time.Now().UnixNano()),
+		timestamp:  fmt.Sprintf("%d", time.Now().UnixNano()),
+		expire:     fmt.Sprintf("%d", expireAfter),
 
 		bufsz: max64(minPartSize, partSize),
 
-		ch: make(chan *part),
+		ch:         make(chan *part),
 		md5OfParts: md5.New(),
-		md5: md5.New(),
+		md5:        md5.New(),
 
 		bp: newBufferPool(minPartSize),
 	}
+
 	for i := 0; i < max(concurrency, 1); i++ {
 		go lo.worker()
 	}
 
 	// Create segment container if it doesn't already exist
-	err := c.ContainerCreate(lo.container + "_segments", nil)
+	err := c.ContainerCreate(lo.container+"_segments", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +180,7 @@ func (lo *largeObject) putPart(part *part) error {
 	container := lo.container + "_segments"
 	objectName := lo.objectName + "/" + lo.timestamp + "/" + fmt.Sprintf("%d", part.PartNumber)
 
-	debug("putPart(", container, objectName, part.len, fmt.Sprintf("%x", part.contentMd5), part.ETag , ")")
+	debug("putPart(", container, objectName, part.len, fmt.Sprintf("%x", part.contentMd5), part.ETag, ")")
 
 	if _, err := part.r.Seek(0, 0); err != nil { // move back to beginning, if retrying
 		return err
@@ -221,9 +223,14 @@ func (lo *largeObject) Close() (err error) {
 		return lo.err
 	}
 	// Complete Multipart upload
-	debug("completeMultipart(", lo.container, lo.objectName, "X-Object-Manifest: ", lo.container  + "_segments/" + lo.objectName + "/" + lo.timestamp, ")")
+	debug("completeMultipart(", lo.container, lo.objectName, "X-Object-Manifest: ", lo.container+"_segments/"+lo.objectName+"/"+lo.timestamp, ")")
 
-	reqHeaders := map[string]string{ "X-Object-Manifest": lo.container + "_segments/" + lo.objectName + "/" + lo.timestamp }
+	reqHeaders := map[string]string{"X-Object-Manifest": lo.container + "_segments/" + lo.objectName + "/" + lo.timestamp}
+
+	if lo.expire != "0" {
+		reqHeaders["X-Delete-After"] = lo.expire
+	}
+
 	var headers swift.Headers
 	for i := 0; i < 3; i++ { //NTry
 		headers, err = lo.c.ObjectPut(lo.container, lo.objectName, strings.NewReader(""), true, "", "", reqHeaders)
@@ -261,25 +268,25 @@ func (lo *largeObject) Close() (err error) {
 			}
 		}
 		return
-	} 
+	}
 	return
 }
 
 // Try to abort multipart upload. Do not error on failure.
 func (lo *largeObject) abort() {
 	debug("abort()")
-	objects, err := lo.c.ObjectNamesAll(lo.container + "_segments", nil)
+	objects, err := lo.c.ObjectNamesAll(lo.container+"_segments", nil)
 	if err != nil {
 		fmt.Printf("Error aborting multipart upload: %v\n", err)
 		return
 	}
 	for _, object := range objects {
-	    if strings.HasPrefix(object, lo.objectName + "/" + lo.timestamp + "/") {
-	    	lo.c.ObjectDelete(lo.container + "_segments", object)
-	    	if err != nil {
+		if strings.HasPrefix(object, lo.objectName+"/"+lo.timestamp+"/") {
+			lo.c.ObjectDelete(lo.container+"_segments", object)
+			if err != nil {
 				fmt.Printf("Error aborting multipart upload: %v\n", err)
-	    	}
-	    }
+			}
+		}
 	}
 	return
 }
@@ -306,8 +313,8 @@ func (lo *largeObject) md5Content(r io.ReadSeeker) (string, string, error) {
 func (lo *largeObject) putMd5() (err error) {
 	calcMd5 := fmt.Sprintf("%x", lo.md5.Sum(nil))
 	md5Reader := strings.NewReader(calcMd5)
-	debug("putMd5()", calcMd5, lo.container + "/" + lo.objectName + ".md5")
-	_, err = lo.c.ObjectPut(lo.container, lo.objectName + ".md5", md5Reader, true, "", "", nil)
+	debug("putMd5()", calcMd5, lo.container+"/"+lo.objectName+".md5")
+	_, err = lo.c.ObjectPut(lo.container, lo.objectName+".md5", md5Reader, true, "", "", nil)
 	return
 }
 
@@ -326,14 +333,12 @@ func min(a, b int) int {
 	return b
 }
 
-
 func max64(a, b int64) int64 {
 	if a > b {
 		return a
 	}
 	return b
 }
-
 
 func max(a, b int) int {
 	if a > b {
