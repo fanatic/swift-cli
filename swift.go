@@ -1,23 +1,23 @@
 package main
 
 import (
-  "fmt"
-  "github.com/spf13/cobra"
-  "github.com/ncw/swift"
-  "log"
-  "io"
-  "os"
-  "strings"
+	"fmt"
+	"github.com/ncw/swift"
+	"github.com/spf13/cobra"
+	"io"
+	"log"
+	"os"
+	"strings"
 )
 
 var (
-	VERSION = "0.1"
+	VERSION   = "0.1"
 	GITCOMMIT = "HEAD"
 )
 
 func main() {
 	var rootCmd = &cobra.Command{
-		Use: "swift",
+		Use:   "swift",
 		Short: "swift command line interface",
 	}
 
@@ -34,9 +34,9 @@ func main() {
 	rootCmd.AddCommand(cmdVersion)
 
 	var cmdLs = &cobra.Command{
-		Use: "ls [container[/object]]",
+		Use:   "ls [container[/object]]",
 		Short: "list containers or objects",
-		Long: "list containers or objects",
+		Long:  "list containers or objects",
 		Run: func(cmd *cobra.Command, args []string) {
 			parseDefaultFlags(*flDebug)
 			c := connect()
@@ -73,8 +73,9 @@ func main() {
 
 	var flConcurrency *int
 	var flPartSize *int64
+	var flExpireAfter *int64
 	var cmdPut = &cobra.Command{
-		Use: "put container[/object]",
+		Use:   "put container[/object]",
 		Short: "upload (put) an object",
 		Run: func(cmd *cobra.Command, args []string) {
 			parseDefaultFlags(*flDebug)
@@ -85,7 +86,7 @@ func main() {
 			}
 			r := os.Stdin
 			defer r.Close()
-			w, err := NewUploader(c, args[0], *flConcurrency, *flPartSize)
+			w, err := NewUploader(c, args[0], *flConcurrency, *flPartSize, *flExpireAfter)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -102,10 +103,11 @@ func main() {
 	}
 	flConcurrency = cmdPut.Flags().IntP("concurrency", "c", 10, "Concurrency of transfers")
 	flPartSize = cmdPut.Flags().Int64P("partsize", "s", 20971520, "Initial size of concurrent parts, in bytes")
+	flExpireAfter = cmdPut.Flags().Int64P("expire", "e", 0, "Number of seconds to expire document after")
 	rootCmd.AddCommand(cmdPut)
 
 	var cmdGet = &cobra.Command{
-		Use: "get container[/object]",
+		Use:   "get container[/object]",
 		Short: "download (get) an object",
 		Run: func(cmd *cobra.Command, args []string) {
 			parseDefaultFlags(*flDebug)
@@ -129,7 +131,7 @@ func main() {
 	rootCmd.AddCommand(cmdGet)
 
 	var cmdDelete = &cobra.Command{
-		Use: "delete container[/object]",
+		Use:   "delete container[/object]",
 		Short: "delete an object",
 		Run: func(cmd *cobra.Command, args []string) {
 			parseDefaultFlags(*flDebug)
@@ -162,12 +164,12 @@ func main() {
 					return
 				}
 				for _, object := range objects {
-				    if strings.HasPrefix(object, loParts[1]) {
-				    	c.ObjectDelete(loParts[0], object)
-				    	if err != nil {
+					if strings.HasPrefix(object, loParts[1]) {
+						c.ObjectDelete(loParts[0], object)
+						if err != nil {
 							fmt.Println(err)
-				    	}
-				    }
+						}
+					}
 				}
 			}
 		},
@@ -196,7 +198,7 @@ func debugf(fmt string, v ...interface{}) {
 }
 
 func connect() *swift.Connection {
-	c := swift.Connection {
+	c := swift.Connection{
 		// This should be your username
 		UserName: os.Getenv("ST_USER"),
 		// This should be your api key
