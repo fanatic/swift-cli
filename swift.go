@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/ncw/swift"
+	"github.com/emccode/swift"
 	"github.com/spf13/cobra"
 	"io"
 	"log"
