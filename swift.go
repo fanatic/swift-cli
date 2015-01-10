@@ -1,8 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
-	"github.com/ncw/swift"
+	"github.com/emccode/swift"
 	"github.com/spf13/cobra"
 	"io"
 	"log"
@@ -74,19 +75,42 @@ func main() {
 	var flConcurrency *int
 	var flPartSize *int64
 	var flExpireAfter *int64
+
 	var cmdPut = &cobra.Command{
-		Use:   "put container[/object]",
+		Use:   "put fromfile container[/object] OR put container[/object] < stream",
 		Short: "upload (put) an object",
 		Run: func(cmd *cobra.Command, args []string) {
 			parseDefaultFlags(*flDebug)
 			c := connect()
-			if len(args) != 1 {
-				fmt.Println("Must specify one container name")
+
+			switch {
+			case len(args) == 0:
+				fmt.Println("Need to specify at least put container[/object]")
+				os.Exit(1)
+			case len(args) > 2:
+				fmt.Println("Too many parameters specified, at most put fromfile container[/object]")
 				os.Exit(1)
 			}
-			r := os.Stdin
-			defer r.Close()
-			w, err := NewUploader(c, args[0], *flConcurrency, *flPartSize, *flExpireAfter)
+
+			var r *os.File
+			var err error
+			var fileOut string
+
+			if len(args) == 1 {
+				r = os.Stdin
+				defer r.Close()
+				fileOut = args[0]
+			} else {
+				r, err = os.Open(args[0])
+				if err != nil {
+					log.Fatal(err)
+					os.Exit(1)
+				}
+				defer r.Close()
+				fileOut = args[1]
+			}
+
+			w, err := NewUploader(c, fileOut, *flConcurrency, *flPartSize, *flExpireAfter)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -107,25 +131,51 @@ func main() {
 	rootCmd.AddCommand(cmdPut)
 
 	var cmdGet = &cobra.Command{
-		Use:   "get container[/object]",
+		Use:   "get container[/object] tofile OR get container[/object] > tofile",
 		Short: "download (get) an object",
 		Run: func(cmd *cobra.Command, args []string) {
 			parseDefaultFlags(*flDebug)
 			c := connect()
-			if len(args) != 1 {
-				fmt.Println("Must specify one object")
+
+			switch {
+			case len(args) == 0:
+				fmt.Println("Need to specify at least get container[/object]")
+				os.Exit(1)
+			case len(args) > 2:
+				fmt.Println("Too many parameters specified, at most get container[/object] tofile")
 				os.Exit(1)
 			}
+
 			pathParts := strings.SplitN(args[0], "/", 2)
 			if len(pathParts) <= 1 {
 				fmt.Println("Must specify full object path (container/object)")
 				os.Exit(1)
 			}
-			_, err := c.ObjectGet(pathParts[0], pathParts[1], os.Stdout, false, nil)
+
+			var w io.Writer
+			var bw *bufio.Writer
+
+			switch {
+			case len(args) == 1:
+				w = os.Stdout
+			case len(args) == 2:
+				outFile, err := os.Create(args[1])
+				if err != nil {
+					log.Fatal(err)
+					os.Exit(1)
+				}
+				bw = bufio.NewWriter(outFile)
+				w = bw
+				defer outFile.Close()
+				defer bw.Flush()
+			}
+
+			_, err := c.ObjectGet(pathParts[0], pathParts[1], w, false, nil)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
+
 		},
 	}
 	rootCmd.AddCommand(cmdGet)
