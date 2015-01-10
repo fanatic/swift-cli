@@ -257,6 +257,15 @@ func connect() *swift.Connection {
 		AuthUrl: os.Getenv("ST_AUTH"),
 	}
 
+	if os.Getenv("ST_X509") == "embedded" {
+		var pool *x509.CertPool
+		pool = x509.NewCertPool()
+		pool.AppendCertsFromPEM(pemCerts)
+		c.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		}
+	}
+
 	// Authenticate
 	err := c.Authenticate()
 	if err != nil {

@@ -32,6 +32,10 @@ swift-cli is written in Go and requires a Go installation. It can be installed w
     $ export ST_USER=test:tester
     $ export ST_KEY=testing
 
+ If running from a statically compiled binary in a sratch based container, you can have swift-cli use embedded x509 keys:
+
+    $ export ST_X509=embedded
+
 ## Odds and Ends ##
 This is a WIP that does one thing relatively well: managing dynamic large objects in swift.  Currently it only supports stdin and stdout.
 
