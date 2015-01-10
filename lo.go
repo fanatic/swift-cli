@@ -5,7 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
-	"github.com/emccode/swift"
+	"github.com/ncw/swift"
 	"hash"
 	"io"
 	"math"

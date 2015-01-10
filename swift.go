@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/emccode/swift"
+	"github.com/ncw/swift"
 	"github.com/spf13/cobra"
 	"io"
 	"log"
